@@ -1,16 +1,26 @@
 # urls.py
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import DoctorViewSet, CustomTokenObtainPairView
 from rest_framework_simplejwt.views import TokenRefreshView
 # NEW: Import settings and static for serving media files
 from django.conf import settings
 from django.conf.urls.static import static
 
+from .views import (
+    DoctorViewSet, 
+    CustomTokenObtainPairView, 
+    OCTImageViewSet,
+    AnalysisResultViewSet,
+    ReviewViewSet
+)
+
 # Create a router for automatic URL routing for the viewset
 router = DefaultRouter()
-# Register the DoctorViewSet with the 'doctors' prefix
-router.register(r'doctors', DoctorViewSet, basename='doctor')
+router.register(r'doctors', DoctorViewSet)
+router.register(r'oct-images', OCTImageViewSet)
+router.register(r'analysis-results', AnalysisResultViewSet)
+router.register(r'reviews', ReviewViewSet)
+
 
 # Define URL patterns
 urlpatterns = [

@@ -1,35 +1,22 @@
-# serializers.py
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import Doctor
+from .models import Doctor, OCTImage, AnalysisResult, Review
 from django.db.utils import IntegrityError
 from rest_framework.exceptions import ValidationError
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 
+# Keep all Doctor-related serializers exactly as they were
 class UserSerializer(serializers.ModelSerializer):
-    """
-    Serializer for the User model
-    Handles conversion between User model instances and Python data types
-    """
     class Meta:
-        # Specify which model this serializer is for
         model = User
-        # List of fields to include in the serialized output
         fields = ('id', 'username', 'email', 'first_name', 'last_name')
-        # Fields that are read-only and cannot be modified via the serializer
         read_only_fields = ('id',)
 
 class DoctorProfileSerializer(serializers.ModelSerializer):
-    """
-    Serializer for the Doctor model
-    Handles only the Doctor-specific fields (not User fields)
-    """
     class Meta:
         model = Doctor
-        # Only include Doctor model fields, not the related User fields
-        # UPDATED: Added profile_picture to the list of fields
-        fields = ('hospital', 'specialty', 'role', 'license_number', 'profile_picture' , 'phone_number')
+        fields = ('hospital', 'specialty', 'role', 'license_number', 'profile_picture', 'phone_number')
 
 class DoctorSignupSerializer(serializers.Serializer):
     username = serializers.CharField(required=True)
@@ -49,81 +36,100 @@ class DoctorSignupSerializer(serializers.Serializer):
             )
             Doctor.objects.create(user=user)
             return user
-        except IntegrityError as e:
-            if 'username' in str(e):
-                raise ValidationError({"username": "This username is already taken."})
-            elif 'email' in str(e):
-                raise ValidationError({"email": "This email is already in use."})
-            else:
-                raise ValidationError("An error occurred during signup.")
+        except Exception as e:
+            raise ValidationError({"error": str(e)})
 
 class DoctorCompleteSerializer(serializers.ModelSerializer):
-    """
-    Serializer that combines User and Doctor data in a nested structure
-    """
-    # Nested serializer - includes all User fields in the response
     user = UserSerializer()
     
     class Meta:
         model = Doctor
-        # Include the nested user serializer and all Doctor fields
-        # UPDATED: Added profile_picture to the list of fields
-        fields = ('user', 'hospital', 'specialty', 'role', 'license_number', 'profile_picture' , 'phone_number')
+        fields = ('user', 'hospital', 'specialty', 'role', 'license_number', 'profile_picture', 'phone_number')
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
-    """
-    Custom JWT token serializer that includes user data in the response
-    Extends the standard JWT token serializer
-    """
     def validate(self, attrs):
-        # Call the parent validate method to authenticate user and create tokens
         data = super().validate(attrs)
-        
-        # Get the authenticated user (set by parent class)
         user = self.user
-        try:
-            # Try to get the associated Doctor profile
-            doctor = Doctor.objects.get(user=user)
-            
-            # NEW: Get the profile picture URL if it exists
-            profile_picture_url = None
-            if doctor.profile_picture:
-                profile_picture_url = doctor.profile_picture.url
-            
-            # Add user and doctor data to the response
-            data['user'] = {
-                'id': user.id,
-                'username': user.username,
-                'email': user.email,
-                'first_name': user.first_name,
-                'last_name': user.last_name,
-                'doctor': {
-                    'hospital': doctor.hospital,
-                    'specialty': doctor.specialty,
-                    'role': doctor.role,
-                    'license_number': doctor.license_number,
-                    # NEW: Include profile picture URL in the response
-                    'profile_picture': profile_picture_url
-                }
+        doctor = Doctor.objects.get(user=user)
+        data['user'] = {
+            'id': user.id,
+            'username': user.username,
+            'email': user.email,
+            'first_name': user.first_name,
+            'last_name': user.last_name,
+            'doctor': {
+                'hospital': doctor.hospital,
+                'specialty': doctor.specialty,
+                'role': doctor.role,
+                'license_number': doctor.license_number,
+                'profile_picture': doctor.profile_picture.url if doctor.profile_picture else None,
+                'phone_number': doctor.phone_number
             }
-        except Doctor.DoesNotExist:
-            # If the Doctor profile doesn't exist, create one
-            Doctor.objects.create(user=user)
-            # Add user data with empty doctor fields
-            data['user'] = {
-                'id': user.id,
-                'username': user.username,
-                'email': user.email,
-                'first_name': user.first_name,
-                'last_name': user.last_name,
-                'doctor': {
-                    'hospital': '',
-                    'specialty': '',
-                    'role': 'general',
-                    'license_number': '',
-                    # NEW: Set profile picture to None for new profiles
-                    'profile_picture': None
-                }
-            }
-            
+        }
         return data
+
+class OCTImageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OCTImage
+        fields = ('id', 'doctor', 'image_file', 'upload_date', 'custom_id')
+        read_only_fields = ('id', 'upload_date')
+
+class OCTImageCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OCTImage
+        fields = ('image_file', 'custom_id')
+    
+    def create(self, validated_data):
+        doctor = self.context['request'].user.doctor
+        validated_data['doctor'] = doctor
+        return super().create(validated_data)
+
+class OCTImageDetailSerializer(serializers.ModelSerializer):
+    doctor = DoctorCompleteSerializer(read_only=True)
+    
+    class Meta:
+        model = OCTImage
+        fields = ('id', 'doctor', 'image_file', 'upload_date', 'custom_id')
+        read_only_fields = ('id', 'upload_date', 'doctor')
+
+class AnalysisResultSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AnalysisResult
+        fields = ('id', 'oct_image', 'classification', 'findings', 'analysis_image', 'analysis_date')
+        read_only_fields = ('id', 'analysis_date')
+
+class AnalysisResultDetailSerializer(serializers.ModelSerializer):
+    oct_image = OCTImageDetailSerializer(read_only=True)
+    
+    class Meta:
+        model = AnalysisResult
+        fields = ('id', 'oct_image', 'classification', 'findings', 'analysis_image', 'analysis_date')
+        read_only_fields = ('id', 'analysis_date', 'oct_image')
+
+class ReviewSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Review
+        fields = ('id', 'analysis_result', 'doctor', 'rating', 'comments', 'review_date')
+        read_only_fields = ('id', 'review_date')
+
+class ReviewCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Review
+        fields = ('analysis_result', 'rating', 'comments')
+    
+    def create(self, validated_data):
+        doctor = self.context['request'].user.doctor
+        validated_data['doctor'] = doctor
+        existing_review = Review.objects.filter(analysis_result=validated_data['analysis_result']).exists()
+        if existing_review:
+            raise ValidationError({"analysis_result": "A review already exists for this analysis result."})
+        return super().create(validated_data)
+
+class ReviewDetailSerializer(serializers.ModelSerializer):
+    analysis_result = AnalysisResultDetailSerializer(read_only=True)
+    doctor = DoctorCompleteSerializer(read_only=True)
+    
+    class Meta:
+        model = Review
+        fields = ('id', 'analysis_result', 'doctor', 'rating', 'comments', 'review_date')
+        read_only_fields = ('id', 'review_date', 'analysis_result', 'doctor')

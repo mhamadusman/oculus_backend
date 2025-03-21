@@ -1,40 +1,41 @@
-# views.py
-from rest_framework import viewsets, permissions, status
+from rest_framework import viewsets, permissions, status, filters
 from rest_framework.response import Response
 from rest_framework.decorators import action
+from django.shortcuts import get_object_or_404
 from django.contrib.auth.models import User
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
-from .models import Doctor
+from .models import Doctor, OCTImage, AnalysisResult, Review
 from .serializers import (
-    DoctorSignupSerializer, 
-    DoctorProfileSerializer, 
-    DoctorCompleteSerializer,
-    CustomTokenObtainPairSerializer
+    DoctorSignupSerializer, DoctorProfileSerializer, DoctorCompleteSerializer,
+    CustomTokenObtainPairSerializer, OCTImageSerializer, OCTImageCreateSerializer,
+    OCTImageDetailSerializer, AnalysisResultSerializer, AnalysisResultDetailSerializer,
+    ReviewSerializer, ReviewCreateSerializer, ReviewDetailSerializer
 )
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework.parsers import MultiPartParser, FormParser
+from django.shortcuts import get_object_or_404
+
+class IsOwnerOrReadOnly(permissions.BasePermission):
+    def has_object_permission(self, request, view, obj):
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        if hasattr(obj, 'doctor'):
+            return obj.doctor.user == request.user
+        elif hasattr(obj, 'oct_image'):
+            return obj.oct_image.doctor.user == request.user
+        elif hasattr(obj, 'analysis_result'):
+            return obj.analysis_result.oct_image.doctor.user == request.user
+        return False
 
 class CustomTokenObtainPairView(TokenObtainPairView):
-    """
-    Custom view for obtaining JWT tokens
-    Uses our custom serializer that includes user data in the response
-    """
     serializer_class = CustomTokenObtainPairSerializer
 
 class DoctorViewSet(viewsets.ModelViewSet):
-    """
-    ViewSet for Doctor model - handles all CRUD operations plus custom actions
-    """
     queryset = Doctor.objects.all()
     parser_classes = (JSONParser, MultiPartParser, FormParser)
     
     def get_permissions(self):
-        """
-        Define permissions based on the action being performed
-        Returns appropriate permission classes
-        """
         if self.action == 'signup' or self.action == 'login':
             return [permissions.AllowAny()]
         elif self.action in ['list', 'retrieve']:
@@ -42,9 +43,6 @@ class DoctorViewSet(viewsets.ModelViewSet):
         return [permissions.IsAuthenticated()]
     
     def get_serializer_class(self):
-        """
-        Return different serializers based on the action
-        """
         if self.action == 'signup':
             return DoctorSignupSerializer
         elif self.action == 'me' or self.action == 'update_profile':
@@ -53,22 +51,12 @@ class DoctorViewSet(viewsets.ModelViewSet):
     
     @action(detail=False, methods=['post'])
     def signup(self, request):
-        """
-        Custom action for user registration
-        Creates a new User and Doctor profile
-        Returns JWT tokens and user data
-        """
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
-        
         refresh = RefreshToken.for_user(user)
         doctor = Doctor.objects.get(user=user)
-        
-        profile_picture_url = None
-        if doctor.profile_picture:
-            profile_picture_url = doctor.profile_picture.url
-        
+        profile_picture_url = doctor.profile_picture.url if doctor.profile_picture else None
         return Response({
             'refresh': str(refresh),
             'access': str(refresh.access_token),
@@ -91,67 +79,112 @@ class DoctorViewSet(viewsets.ModelViewSet):
     
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
     def me(self, request):
-        """
-        Returns the current user's Doctor profile
-        Requires authentication
-        """
         doctor = Doctor.objects.get(user=request.user)
         serializer = DoctorCompleteSerializer(doctor)
         return Response(serializer.data)
     
-
-
     @action(detail=False, methods=['put', 'patch'], permission_classes=[IsAuthenticated])
     def update_profile(self, request):
-        try:
-            user = request.user
-            print("Received data:", request.data)  # Debug
-            print("Received files:", request.FILES)  # Debug files
-            
-            # Update user fields
-            user_data = {
-                'first_name': request.data.get('first_name', user.first_name),
-                'last_name': request.data.get('last_name', user.last_name),
-                'email': request.data.get('email', user.email),
-            }
-            
-            # Filter out None values
-            user_data = {k: v for k, v in user_data.items() if v is not None}
-            
-            # Update user
-            if user_data:
-                for key, value in user_data.items():
-                    if hasattr(user, key):
-                        setattr(user, key, value)
-                user.save()
-            
-            # Update doctor profile
-            doctor = Doctor.objects.get(user=user)
-            doctor_data = request.data.get('doctor', {})
-            
-            # Process doctor data
-            if doctor_data:
-                for key, value in doctor_data.items():
-                    if hasattr(doctor, key) and value is not None:
-                        setattr(doctor, key, value)
-            
-            # Handle profile picture upload
-            if 'profile_picture' in request.FILES:
-                doctor.profile_picture = request.FILES['profile_picture']
-            
-            doctor.save()
-            
-            # Return complete profile data
-            complete_serializer = DoctorCompleteSerializer(doctor)
-            return Response(complete_serializer.data)
-        
-        except Exception as e:
-            import traceback
-            print("Error in update_profile:", str(e))
-            print(traceback.format_exc())
-            return Response(
-                {"error": str(e)}, 
-                status=500
-            )
-        
-        
+        user = request.user
+        doctor = Doctor.objects.get(user=user)
+        serializer = self.get_serializer(doctor, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+class OCTImageViewSet(viewsets.ModelViewSet):
+    queryset = OCTImage.objects.all()
+    parser_classes = (MultiPartParser, FormParser, JSONParser)
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['custom_id']
+    ordering_fields = ['upload_date']
+    
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            return [permissions.IsAuthenticated()]
+        return [permissions.IsAuthenticated(), IsOwnerOrReadOnly()]
+    
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return OCTImageCreateSerializer
+        elif self.action == 'retrieve':
+            return OCTImageDetailSerializer
+        return OCTImageSerializer
+    
+    def get_queryset(self):
+        if self.request.user.is_authenticated:
+            doctor = Doctor.objects.get(user=self.request.user)
+            return OCTImage.objects.filter(doctor=doctor)
+        return OCTImage.objects.none()
+    
+    def perform_create(self, serializer):
+        doctor = Doctor.objects.get(user=self.request.user)
+        oct_image = serializer.save(doctor=doctor)
+        # Call AI model and create AnalysisResult
+        ai_result = run_ai_analysis(oct_image.image_file.path)
+        AnalysisResult.objects.create(
+            oct_image=oct_image,
+            classification=ai_result['category'],
+            findings=ai_result['text'],
+            analysis_image=ai_result['image']
+        )
+
+# Placeholder for AI function
+def run_ai_analysis(image_path):
+    # Implement your AI model logic here
+    # This function should return a dictionary with 'category', 'text', and 'image'
+    # 'image' should be a path or file object suitable for ImageField
+    return {
+        'category': 'normal',
+        'text': 'No abnormalities detected.',
+        'image': 'path/to/processed/image.jpg'  # Replace with actual processed image path
+    }
+
+class AnalysisResultViewSet(viewsets.ModelViewSet):
+    queryset = AnalysisResult.objects.all()
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['classification']
+    ordering_fields = ['analysis_date']
+    
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            return [permissions.IsAuthenticated()]
+        return [permissions.IsAuthenticated(), IsOwnerOrReadOnly()]
+    
+    def get_serializer_class(self):
+        if self.action == 'retrieve':
+            return AnalysisResultDetailSerializer
+        return AnalysisResultSerializer
+    
+    def get_queryset(self):
+        if self.request.user.is_authenticated:
+            doctor = Doctor.objects.get(user=self.request.user)
+            return AnalysisResult.objects.filter(oct_image__doctor=doctor)
+        return AnalysisResult.objects.none()
+
+class ReviewViewSet(viewsets.ModelViewSet):
+    queryset = Review.objects.all()
+    filter_backends = [filters.OrderingFilter]
+    ordering_fields = ['review_date', 'rating']
+    
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            return [permissions.IsAuthenticated()]
+        return [permissions.IsAuthenticated(), IsOwnerOrReadOnly()]
+    
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return ReviewCreateSerializer
+        elif self.action == 'retrieve':
+            return ReviewDetailSerializer
+        return ReviewSerializer
+    
+    def get_queryset(self):
+        if self.request.user.is_authenticated:
+            doctor = Doctor.objects.get(user=self.request.user)
+            return Review.objects.filter(doctor=doctor)
+        return Review.objects.none()
+    
+    def perform_create(self, serializer):
+        doctor = Doctor.objects.get(user=self.request.user)
+        serializer.save(doctor=doctor)
