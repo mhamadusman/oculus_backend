@@ -5,6 +5,9 @@ from django.db.utils import IntegrityError
 from rest_framework.exceptions import ValidationError
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
+from .models import OCTImage, AnalysisResult, Doctor
+
+
 
 # Keep all Doctor-related serializers exactly as they were
 class UserSerializer(serializers.ModelSerializer):
@@ -67,7 +70,6 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             }
         }
         return data
-
 class OCTImageSerializer(serializers.ModelSerializer):
     class Meta:
         model = OCTImage
@@ -84,19 +86,22 @@ class OCTImageCreateSerializer(serializers.ModelSerializer):
         validated_data['doctor'] = doctor
         return super().create(validated_data)
 
-class OCTImageDetailSerializer(serializers.ModelSerializer):
-    doctor = DoctorCompleteSerializer(read_only=True)
-    
-    class Meta:
-        model = OCTImage
-        fields = ('id', 'doctor', 'image_file', 'upload_date', 'custom_id')
-        read_only_fields = ('id', 'upload_date', 'doctor')
 
 class AnalysisResultSerializer(serializers.ModelSerializer):
     class Meta:
         model = AnalysisResult
         fields = ('id', 'oct_image', 'classification', 'findings', 'analysis_image', 'analysis_date')
         read_only_fields = ('id', 'analysis_date')
+        
+class OCTImageDetailSerializer(serializers.ModelSerializer):
+    doctor = DoctorCompleteSerializer(read_only=True)
+    analysis_result = AnalysisResultSerializer(read_only=True)
+    
+    class Meta:
+        model = OCTImage
+        fields = ('id', 'doctor', 'image_file', 'upload_date', 'custom_id', 'analysis_result')
+        read_only_fields = ('id', 'upload_date', 'doctor')
+
 
 class AnalysisResultDetailSerializer(serializers.ModelSerializer):
     oct_image = OCTImageDetailSerializer(read_only=True)

@@ -1,3 +1,5 @@
+from django.core.files import File
+import os
 from rest_framework import viewsets, permissions, status, filters
 from rest_framework.response import Response
 from rest_framework.decorators import action
@@ -92,6 +94,15 @@ class DoctorViewSet(viewsets.ModelViewSet):
         serializer.save()
         return Response(serializer.data)
 
+
+
+def run_ai_analysis(image_path):
+    # For testing, simulate AI analysis using the uploaded image as the processed image
+    return {
+        'category': 'normal',
+        'text': 'No abnormalities detected.',
+        'image_path': image_path  # Return the path instead of a File object
+    }
 class OCTImageViewSet(viewsets.ModelViewSet):
     queryset = OCTImage.objects.all()
     parser_classes = (MultiPartParser, FormParser, JSONParser)
@@ -120,25 +131,23 @@ class OCTImageViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         doctor = Doctor.objects.get(user=self.request.user)
         oct_image = serializer.save(doctor=doctor)
-        # Call AI model and create AnalysisResult
+        # Call AI model simulation and create AnalysisResult
         ai_result = run_ai_analysis(oct_image.image_file.path)
-        AnalysisResult.objects.create(
+        analysis_result = AnalysisResult.objects.create(
             oct_image=oct_image,
             classification=ai_result['category'],
             findings=ai_result['text'],
-            analysis_image=ai_result['image']
         )
-
+        if ai_result['image_path']:
+            # Open the file explicitly and save it
+            with open(ai_result['image_path'], 'rb') as f:
+                analysis_result.analysis_image.save(
+                    f"processed_{oct_image.id}.jpg",
+                    File(f),
+                    save=True
+                )
 # Placeholder for AI function
-def run_ai_analysis(image_path):
-    # Implement your AI model logic here
-    # This function should return a dictionary with 'category', 'text', and 'image'
-    # 'image' should be a path or file object suitable for ImageField
-    return {
-        'category': 'normal',
-        'text': 'No abnormalities detected.',
-        'image': 'path/to/processed/image.jpg'  # Replace with actual processed image path
-    }
+
 
 class AnalysisResultViewSet(viewsets.ModelViewSet):
     queryset = AnalysisResult.objects.all()
