@@ -32,7 +32,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-
+    'django_filters',
      'rest_framework',           # Django REST Framework
     'corsheaders', 
     'rest_framework_simplejwt',             # Cross-Origin Resource Sharing
@@ -114,8 +114,8 @@ CORS_ALLOW_METHODS = [
     'PUT',
 ] # Temporary for development
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3001",
-    "http://127.0.0.1:3001",
+    "http://localhost:3003",
+    "http://127.0.0.1:3003",
 ]
 CORS_ALLOW_CREDENTIALS = True                       # Important for session cookies
 

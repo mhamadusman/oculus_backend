@@ -21,6 +21,14 @@ class DoctorProfileSerializer(serializers.ModelSerializer):
         model = Doctor
         fields = ('hospital', 'specialty', 'role', 'license_number', 'profile_picture', 'phone_number')
 
+class DoctorSerializer(serializers.ModelSerializer):
+    first_name = serializers.CharField(source='user.first_name', read_only=True)
+    last_name = serializers.CharField(source='user.last_name', read_only=True)
+
+    class Meta:
+        model = Doctor
+        fields = ('first_name', 'last_name', 'hospital', 'role', 'profile_picture')
+
 class DoctorSignupSerializer(serializers.Serializer):
     username = serializers.CharField(required=True)
     email = serializers.EmailField(required=True)
@@ -92,7 +100,7 @@ class AnalysisResultSerializer(serializers.ModelSerializer):
         model = AnalysisResult
         fields = ('id', 'oct_image', 'classification', 'findings', 'analysis_image', 'analysis_date')
         read_only_fields = ('id', 'analysis_date')
-        
+
 class OCTImageDetailSerializer(serializers.ModelSerializer):
     doctor = DoctorCompleteSerializer(read_only=True)
     analysis_result = AnalysisResultSerializer(read_only=True)
@@ -101,6 +109,12 @@ class OCTImageDetailSerializer(serializers.ModelSerializer):
         model = OCTImage
         fields = ('id', 'doctor', 'image_file', 'upload_date', 'custom_id', 'analysis_result')
         read_only_fields = ('id', 'upload_date', 'doctor')
+
+class OCTImageCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OCTImage
+        fields = ('id', 'custom_id', 'image_file', 'upload_date')
+        read_only_fields = ('id', 'upload_date')
 
 
 class AnalysisResultDetailSerializer(serializers.ModelSerializer):
@@ -111,30 +125,48 @@ class AnalysisResultDetailSerializer(serializers.ModelSerializer):
         fields = ('id', 'oct_image', 'classification', 'findings', 'analysis_image', 'analysis_date')
         read_only_fields = ('id', 'analysis_date', 'oct_image')
 
-class ReviewSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Review
-        fields = ('id', 'analysis_result', 'doctor', 'rating', 'comments', 'review_date')
-        read_only_fields = ('id', 'review_date')
+# serializers.py
 
 class ReviewCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Review
         fields = ('analysis_result', 'rating', 'comments')
-    
+
+    def validate_analysis_result(self, value):
+        doctor = self.context['request'].user.doctor
+        if value.oct_image.doctor != doctor:
+            raise serializers.ValidationError("You can only review your own uploaded images.")
+        return value
+
     def create(self, validated_data):
         doctor = self.context['request'].user.doctor
         validated_data['doctor'] = doctor
-        existing_review = Review.objects.filter(analysis_result=validated_data['analysis_result']).exists()
-        if existing_review:
-            raise ValidationError({"analysis_result": "A review already exists for this analysis result."})
         return super().create(validated_data)
 
-class ReviewDetailSerializer(serializers.ModelSerializer):
-    analysis_result = AnalysisResultDetailSerializer(read_only=True)
-    doctor = DoctorCompleteSerializer(read_only=True)
-    
+class ReviewSerializer(serializers.ModelSerializer):
+    doctor = DoctorSerializer(read_only=True)
+    is_owner = serializers.SerializerMethodField()
+
     class Meta:
         model = Review
-        fields = ('id', 'analysis_result', 'doctor', 'rating', 'comments', 'review_date')
-        read_only_fields = ('id', 'review_date', 'analysis_result', 'doctor')
+        fields = ('id', 'analysis_result', 'doctor', 'rating', 'comments', 'review_date', 'is_owner')
+        read_only_fields = ('id', 'doctor', 'review_date')
+
+    def get_is_owner(self, obj):
+        request = self.context.get('request')
+        return request and request.user.is_authenticated and obj.doctor.user == request.user
+
+
+class PublicReviewSerializer(serializers.ModelSerializer):
+    doctor = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Review
+        fields = ('id', 'rating', 'comments', 'review_date', 'doctor')
+
+    def get_doctor(self, obj):
+        return {
+            'first_name': obj.doctor.user.first_name,
+            'last_name': obj.doctor.user.last_name,
+    
+        }

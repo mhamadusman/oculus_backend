@@ -3,6 +3,8 @@ import os
 from rest_framework import viewsets, permissions, status, filters
 from rest_framework.response import Response
 from rest_framework.decorators import action
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework import filters, viewsets
 from django.shortcuts import get_object_or_404
 from django.contrib.auth.models import User
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
@@ -11,7 +13,7 @@ from .serializers import (
     DoctorSignupSerializer, DoctorProfileSerializer, DoctorCompleteSerializer,
     CustomTokenObtainPairSerializer, OCTImageSerializer, OCTImageCreateSerializer,
     OCTImageDetailSerializer, AnalysisResultSerializer, AnalysisResultDetailSerializer,
-    ReviewSerializer, ReviewCreateSerializer, ReviewDetailSerializer
+     ReviewSerializer, ReviewCreateSerializer, PublicReviewSerializer
 )
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework.permissions import IsAuthenticated
@@ -128,9 +130,29 @@ class OCTImageViewSet(viewsets.ModelViewSet):
             return OCTImage.objects.filter(doctor=doctor)
         return OCTImage.objects.none()
     
+    # def perform_create(self, serializer):
+    #     doctor = Doctor.objects.get(user=self.request.user)
+    #     oct_image = serializer.save(doctor=doctor)
+    #     # Call AI model simulation and create AnalysisResult
+    #     ai_result = run_ai_analysis(oct_image.image_file.path)
+    #     analysis_result = AnalysisResult.objects.create(
+    #         oct_image=oct_image,
+    #         classification=ai_result['category'],
+    #         findings=ai_result['text'],
+    #     )
+    #     if ai_result['image_path']:
+    #         # Open the file explicitly and save it
+    #         with open(ai_result['image_path'], 'rb') as f:
+    #             analysis_result.analysis_image.save(
+    #                 f"processed_{oct_image.id}.jpg",
+    #                 File(f),
+    #                 save=True
+    #             )
+
     def perform_create(self, serializer):
         doctor = Doctor.objects.get(user=self.request.user)
         oct_image = serializer.save(doctor=doctor)
+        
         # Call AI model simulation and create AnalysisResult
         ai_result = run_ai_analysis(oct_image.image_file.path)
         analysis_result = AnalysisResult.objects.create(
@@ -138,7 +160,8 @@ class OCTImageViewSet(viewsets.ModelViewSet):
             classification=ai_result['category'],
             findings=ai_result['text'],
         )
-        if ai_result['image_path']:
+
+        if ai_result.get('image_path'):
             # Open the file explicitly and save it
             with open(ai_result['image_path'], 'rb') as f:
                 analysis_result.analysis_image.save(
@@ -146,6 +169,10 @@ class OCTImageViewSet(viewsets.ModelViewSet):
                     File(f),
                     save=True
                 )
+
+        # Ensure the response contains `id`
+        self.response = OCTImageDetailSerializer(oct_image).data
+
 # Placeholder for AI function
 
 
@@ -172,28 +199,20 @@ class AnalysisResultViewSet(viewsets.ModelViewSet):
         return AnalysisResult.objects.none()
 
 class ReviewViewSet(viewsets.ModelViewSet):
-    queryset = Review.objects.all()
-    filter_backends = [filters.OrderingFilter]
+    queryset = Review.objects.all().order_by('-review_date')
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['analysis_result']
     ordering_fields = ['review_date', 'rating']
-    
-    def get_permissions(self):
-        if self.action in ['list', 'retrieve']:
-            return [permissions.IsAuthenticated()]
-        return [permissions.IsAuthenticated(), IsOwnerOrReadOnly()]
-    
+    permission_classes = [IsOwnerOrReadOnly]
+
     def get_serializer_class(self):
         if self.action == 'create':
             return ReviewCreateSerializer
-        elif self.action == 'retrieve':
-            return ReviewDetailSerializer
         return ReviewSerializer
-    
-    def get_queryset(self):
-        if self.request.user.is_authenticated:
-            doctor = Doctor.objects.get(user=self.request.user)
-            return Review.objects.filter(doctor=doctor)
-        return Review.objects.none()
-    
+
     def perform_create(self, serializer):
-        doctor = Doctor.objects.get(user=self.request.user)
+        doctor = self.request.user.doctor
         serializer.save(doctor=doctor)
+
+    def perform_update(self, serializer):
+        serializer.save()
