@@ -20,6 +20,7 @@ class DoctorProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = Doctor
         fields = ('hospital', 'specialty', 'role', 'license_number', 'profile_picture', 'phone_number')
+        read_only_fields = ()  # Explicitly empty to ensure all fields can be updated
 
 class DoctorSerializer(serializers.ModelSerializer):
     first_name = serializers.CharField(source='user.first_name', read_only=True)

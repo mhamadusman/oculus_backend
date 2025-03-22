@@ -90,11 +90,44 @@ class DoctorViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['put', 'patch'], permission_classes=[IsAuthenticated])
     def update_profile(self, request):
         user = request.user
-        doctor = Doctor.objects.get(user=user)
-        serializer = self.get_serializer(doctor, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
-        return Response(serializer.data)
+        try:
+            doctor = Doctor.objects.get(user=user)
+            
+            # Print received data for debugging
+            print("Received data:", request.data)
+            
+            # Extract doctor data from the nested structure if present
+            doctor_data = {}
+            if 'doctor' in request.data and isinstance(request.data['doctor'], dict):
+                # Extract doctor data from the nested structure
+                doctor_data = request.data['doctor']
+            else:
+                # Assume data is directly in the request
+                doctor_data = request.data
+            
+            # Update doctor fields
+            serializer = DoctorProfileSerializer(doctor, data=doctor_data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            
+            # Update user fields if present
+            if 'first_name' in request.data:
+                user.first_name = request.data['first_name']
+            if 'last_name' in request.data:
+                user.last_name = request.data['last_name'] 
+            if 'email' in request.data:
+                user.email = request.data['email']
+            user.save()
+            
+            # Return complete updated data
+            return Response(DoctorCompleteSerializer(doctor).data)
+            
+        except Doctor.DoesNotExist:
+            return Response({"error": "Doctor profile not found"}, status=404)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()  # Print stack trace for debugging
+            return Response({"error": str(e)}, status=500)
 
 
 
